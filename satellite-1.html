@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="bootstrap/css/bootstrap.css" />
+  <link rel="stylesheet" type="text/css" href="bootstrap/css/bootstrap-responsive.css" />
+
+  <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+  <!--[if lt IE 9]>
+    <script src="bootstrap/js/html5shiv.js"></script>
+  <![endif]-->
+
+<script src="lib/jquery-2.0.3.min.js"></script>
+<script src="lib/three.min.js"></script>
+<script src="lib/ThreeCSG.js"></script>
+<script src="lib/csg.js"></script>
+<script src="lib/TrackballControls.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script src="lib/THREEx.KeyboardState.js"></script>
+<script src="lib/stats.js"></script>
+<script src="lib/tween.js"></script>
+<script src="lib/system.js"></script>
+<script src="lib/basic-objects.js"></script>
+
+<script src="lib/postprocessing/EffectComposer.js"></script>
+<script src="lib/postprocessing/RenderPass.js"></script>
+<script src="lib/postprocessing/ShaderPass.js"></script>
+<script src="lib/postprocessing/MaskPass.js"></script>
+<script src="lib/shaders/CopyShader.js"></script>
+
+</head>
+<body class="body">
+
+<div id="page">
+  <div id="content">
+
+    <style>
+      canvas {
+        width: 100%;
+        height: 100%;
+        background: #000;
+      }
+    </style>
+
+    <div id="container">
+
+    </div>
+
+    <!-- ------ Custom Shader Code for atmospheric glow ------ -->
+    <script id="vertexShaderAtmosphere" type="x-shader/x-vertex">
+    varying vec3 vNormal;
+    void main()
+    {
+        vNormal = normalize( normalMatrix * normal );
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+    }
+    </script>
+
+    <!-- fragment shader a.k.a. pixel shader -->
+    <script id="fragmentShaderAtmosphere" type="x-shader/x-vertex">
+    uniform float c;
+    uniform float p;
+    varying vec3 vNormal;
+    void main()
+    {
+    	float intensity = pow( c - dot( vNormal, vec3( 0.0, 0.0, 1.0 ) ), p );
+    	gl_FragColor = vec4( 1.0, 1.0, 1.0, 1.0 ) * intensity;
+    }
+    </script>
+
+		<script>
+
+			var scene, camera, renderer, controls;
+
+      var planet, tween; //hack for easy animation
+
+			var objects = [
+
+			];
+
+      function girder(length, width, height) {
+				return new THREE.Mesh( new THREE.CubeGeometry(length,width,height), new THREE.MeshBasicMaterial( { color: 0x00ff00 } ) );
+			}
+
+			function sphere(radius, segments, rings, color, position, texture) {
+		      // create the sphere's material
+		    var sphereGeometry = new THREE.SphereGeometry(radius, segments, rings)
+		    var sphereMaterial = new THREE.MeshLambertMaterial({ color: color });
+
+        if (texture) {
+          sphereMaterial.map= texture;
+        }
+
+		    var sphere = new THREE.Mesh( sphereGeometry, sphereMaterial);
+		    sphere.position = position;
+				return sphere;
+			}
+
+			function globe(radius, color, position, textureUrl) {
+        var texture = THREE.ImageUtils.loadTexture(textureUrl);
+				var globe = sphere(50, 32, 32, color, position, texture );
+				return globe;
+			}
+
+      function solar_panel(obj) {
+        var o = primative({
+          type:"block",
+          length:15,
+          width:6,
+          height:.4,
+          color:0xaaaaaa,
+          texture:'images/solar-panel.jpg',
+          rotation:{
+            x:0,
+            y:0,
+            z:0
+          },
+          position:{
+            x:20,
+            y:10,
+            z:-20
+          }
+        })
+
+        for (prop in obj) {
+          o[prop] = obj[prop]
+        }
+
+        return o;
+      }
+
+      function solar_panel_array(obj) {
+        solar_array = new THREE.Object3D();
+        for (var i=0; i < 6; i++){
+          solar_array.add(solar_panel({position:{x:0,y:(7*i)+7,z:1}}));
+        }
+        solar_array.position = obj.position;
+
+        return solar_array;
+      }
+
+			function satelite() {
+				s = new THREE.Object3D();
+				s.add(solar_panel_array({position:{x:0, y:0, z:0}}))
+				s.add(solar_panel_array({position:{x:30, y:0, z:0}}))
+				s.add(primative({type:"cylinder", color:0xdddddd, texture:'images/space-station-fade.jpg', position:{x:15.5, y:24, z:0}, radiusTop:5, radiusBottom:5, height:35, radiusSegments:6, heightSegments:6, openEnded:false}))
+				return s;
+			}
+
+      function degrees2radians(degrees) {
+        return degrees * Math.PI / 180;
+      }
+
+      function primative(obj){
+        var geometry, material, mesh;
+        switch (obj.type) {
+          case "sphere":
+            geometry = new THREE.SphereGeometry(obj.radius, obj.segments, obj.rings);
+            break;
+          case "block":
+            geometry = new THREE.CubeGeometry(obj.length,obj.width,obj.height);
+            break;
+					case "cylinder":
+						geometry = new THREE.CylinderGeometry(obj.radiusTop, obj.radiusBottom, obj.height, obj.radiusSegments, obj.heightSegments, obj.openEnded);
+						break;
+        }
+
+        material = new THREE.MeshBasicMaterial( { color: obj.color } )
+
+        if (obj.texture) {
+          material.map = THREE.ImageUtils.loadTexture(obj.texture);
+        }
+
+        mesh = new THREE.Mesh( geometry, material )
+
+        if (obj.rotation) {
+          mesh.rotation.set(degrees2radians(obj.rotation.x),degrees2radians(obj.rotation.y),degrees2radians(obj.rotation.z) );
+        }
+
+        if (obj.position) {
+          mesh.position = obj.position; //.x,obj.position.y,obj.position.z);
+        }
+
+        return mesh;
+      }
+
+
+
+			function pointLight(x,y,z, color) {
+				// create a point light
+				var pointLight = new THREE.PointLight(color);
+
+				// set its position
+				pointLight.position.x = x;
+				pointLight.position.y = y;
+				pointLight.position.z = z;
+
+				return pointLight;
+			}
+
+      function ambientLight(color) {
+        return new THREE.AmbientLight(color);
+      }
+
+
+
+			function init() {
+				scene = new THREE.Scene();
+
+				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
+				camera.position.z = 200;
+				controls = new THREE.TrackballControls(camera);
+				controls.target.set( 0, 0, 0 )
+				controls.rotateSpeed = 1.0;
+				controls.zoomSpeed = 1.2;
+				controls.panSpeed = 0.8;
+				controls.noZoom = false;
+				controls.noPan = false;
+				controls.staticMoving = true;
+				controls.dynamicDampingFactor = 0.3;
+				controls.keys = [ 65, 83, 68 ];
+				controls.addEventListener( 'change', render );
+
+
+				container = document.getElementById("content");
+				renderer = new THREE.WebGLRenderer();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				stats.domElement.style.position = 'absolute';
+				stats.domElement.style.top = '0px';
+				stats.domElement.style.zIndex = 100;
+				container.appendChild( stats.domElement );
+
+				//window.addEventListener( 'resize', onWindowResize, false );
+
+
+				generateObjects();
+				addObjectsToScene();
+				render();
+				animate();
+
+			}
+
+			function generateObjects() {
+				//objects.push(new THREE.Mesh( new THREE.CubeGeometry(1,1,1), new THREE.MeshBasicMaterial( { color: 0x00ff00 } ) ));
+				//objects.push(girder(12,0.1, 0.2));
+
+        planet = globe(5, 0x2244CC, new THREE.Vector3( 0, 0, 0 ), 'images/EarthMap_2500x1250.jpg');
+        planet.add(new THREE.AxisHelper());
+        planet.rotation.set(Math.PI/2, Math.PI/4, Math.PI/4);
+        planet.matrix.makeRotationFromEuler(planet.rotation);
+        planetR = {x:0, y:0, z:0};
+
+        tween1 = new TWEEN.Tween(planetR)
+            .to({y:360}, 24000)
+						.repeat( 5000 )
+						.onUpdate( function() {
+
+              //planet.matrix.multiply(rotation_matrix);
+              //planet.rotation.applyMatrix4(planet.matrix);
+              tilt = (33*Math.PI/180);
+              yAngle = (planetR.y*Math.PI/180);
+              planet.rotation.set(0,yAngle,0);
+
+              //axisOfRotation = new THREE.Vector3(1,0,0);
+              //angle = (planetR.x*Math.PI/180);
+              //planet.rotation.set(xAngle, 0, 0);
+              //quaternion = new THREE.Quaternion().setFromAxisAngle( axisOfRotation, angle);
+              //planet.rotation.makeRotationFromQuaternion( quaternion );
+              //console.log("animate",planetR.x);
+						})
+						.start();
+
+				objects.push(planet);
+				objects.push(pointLight(300, 300, 0, 0xFFFFFF));
+        objects.push(ambientLight(0xffffff));
+
+				satelite = satelite();
+				/*satelite.scale = {
+					x:0.1,
+					y:0.1,
+					z:0.1
+				}*/
+				sateliteR = {a:0, radius:100, da:1, r:0}
+
+				tween2 = new TWEEN.Tween(sateliteR)
+					.to({a:360, r:360}, 8000)
+					.repeat(5000)
+					.onUpdate (function() {
+						satelite.position.x = sateliteR.radius*Math.sin(degrees2radians(sateliteR.a));
+						satelite.position.z = sateliteR.radius*Math.cos(degrees2radians(sateliteR.a));
+						satelite.rotation.y = degrees2radians(sateliteR.r);
+					})
+					.start();
+
+        objects.push(satelite);
+
+				// add planet glow
+				var customMaterialAtmosphere = new THREE.ShaderMaterial(
+				{
+					uniforms:{
+						"c":{type:"f", value:0.5},
+						"p":{type:"f", value:4.0}
+					},
+					vertexShader:document.getElementById('vertexShaderAtmosphere').textContent,
+					fragmentShader:document.getElementById('fragmentShaderAtmosphere').textContent
+				});
+				//var atmos = new THREE.Mesh(planet.clone(), customMaterialAtmosphere );
+				//atmos.scale.x = atmos.scale.y = atmos.scale.z = 1.2;
+				//atmos.material.side = THREE.BackSide;// atmosphere should provide light from behind the sphere, so only render the back side
+				//objects.push(atmos);
+			}
+
+			function addObjectsToScene() {
+				for(obj in objects) {
+					scene.add(objects[obj]);
+				}
+			}
+
+      function render() {
+        renderer.render(scene, camera);
+				stats.update();
+      }
+
+			function animate() {
+				requestAnimationFrame( animate );
+        //planet.rotation.x += 10;
+        TWEEN.update();
+				controls.update();
+        render();
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				controls.handleResize();
+				render();
+			}
+
+
+      //cube.rotation.x += 10;
+      //cube.rotation.y += 10;
+
+      //motion = {
+      //  x:{max:50, min:-50, inc:0.2},
+      //  y:{max:50, min:-50, inc:0.2},
+      //  z:{max:50, min:-50, inc:0.2}
+      //}
+
+      init();
+
+		</script>
+
+  </div>
+</div>
+
+</body>
+</html>

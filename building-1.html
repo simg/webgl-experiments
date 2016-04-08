@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" type="text/css" href="bootstrap/css/bootstrap.css" />
+  <link rel="stylesheet" type="text/css" href="bootstrap/css/bootstrap-responsive.css" />
+
+  <!-- HTML5 shim, for IE6-8 support of HTML5 elements -->
+  <!--[if lt IE 9]>
+    <script src="bootstrap/js/html5shiv.js"></script>
+  <![endif]-->
+
+<script src="lib/jquery-2.0.3.min.js"></script>
+<script src="lib/three.min.js"></script>
+<script src="lib/ThreeCSG.js"></script>
+<script src="lib/csg.js"></script>
+<script src="lib/TrackballControls.js"></script>
+<script src="lib/OrbitControls.js"></script>
+<script src="lib/THREEx.KeyboardState.js"></script>
+<script src="lib/stats.js"></script>
+<script src="lib/tween.js"></script>
+<script src="lib/system.js"></script>
+<script src="lib/basic-objects.js"></script>
+
+<script src="lib/postprocessing/EffectComposer.js"></script>
+<script src="lib/postprocessing/RenderPass.js"></script>
+<script src="lib/postprocessing/ShaderPass.js"></script>
+<script src="lib/postprocessing/MaskPass.js"></script>
+<script src="lib/shaders/CopyShader.js"></script>
+
+</head>
+<body class="body">
+
+<div id="page">
+  <div id="content">
+
+    <style>
+    canvas {
+      width: 100%;
+      height: 100%;
+      background: #fff;
+    }
+    </style>
+
+    <div id="container">
+
+    </div>
+
+    <!-- ------ Custom Shader Code for atmospheric glow ------ -->
+    <script id="vertexShaderAtmosphere" type="x-shader/x-vertex">
+    varying vec3 vNormal;
+    void main()
+    {
+        vNormal = normalize( normalMatrix * normal );
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+    }
+    </script>
+
+    <!-- fragment shader a.k.a. pixel shader -->
+    <script id="fragmentShaderAtmosphere" type="x-shader/x-vertex">
+    uniform float c;
+    uniform float p;
+    varying vec3 vNormal;
+    void main()
+    {
+    	float intensity = pow( c - dot( vNormal, vec3( 0.0, 0.0, 1.0 ) ), p );
+    	gl_FragColor = vec4( 1.0, 1.0, 1.0, 1.0 ) * intensity;
+    }
+    </script>
+
+    <script>
+
+      var planet, tween; //hack for easy animation
+
+      function init() {
+      	scene = new THREE.Scene();
+
+      	camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 5000 );
+
+      	if (false && storage.get("camera-settings")) {
+      		var settings = storage.get("camera-settings");
+      		console.log(settings);
+      		if (settings.position) {
+      			camera.position.x = settings.position.x;
+      			camera.position.y = settings.position.y;
+      			camera.position.z = settings.position.z;
+      			console.log("loading saved camera position");
+      		}
+      	} else {
+      		camera.position.x = 700;
+      		camera.position.y = 700;
+      		camera.position.z = 700;
+      		console.log("loading default camera");
+      	}
+        console.log("camera",camera)
+        camera.up = new THREE.Vector3(0,0,1);
+        camera.lookAt(new THREE.Vector3(0,0,0));
+
+
+      	controls = new THREE.TrackballControls(camera);
+      	//controls = new THREE.OrbitControls(camera);
+      	controls.target.set( 0, 0, 0 )
+      	controls.rotateSpeed = 1.0;
+      	controls.zoomSpeed = 1.2;
+      	controls.panSpeed = 0.8;
+      	controls.noZoom = false;
+      	controls.noPan = false;
+      	controls.staticMoving = true;
+      	controls.dynamicDampingFactor = 0.01;
+      	//controls.keys = [ 65, 83, 68 ];
+      	//controls.keys = {LEFT: 37, UP: 38, RIGHT: 39, BOTTOM: 40};
+      	controls.keys = {LEFT: 65, FORWARD:83, RIGHT: 68, BACK:  87, UP:88, DOWN:67};
+      	controls.addEventListener( 'change', render );
+
+
+      	container = document.getElementById("content");
+      	renderer = new THREE.WebGLRenderer();
+      	renderer.setSize( window.innerWidth, window.innerHeight );
+      	container.appendChild( renderer.domElement );
+
+      	stats = new Stats();
+      	stats.domElement.style.position = 'absolute';
+      	stats.domElement.style.top = '60px';
+      	stats.domElement.style.left = '10px';
+      	stats.domElement.style.zIndex = 100;
+      	container.appendChild( stats.domElement );
+
+      	//window.addEventListener( 'resize', onWindowResize, false );
+
+
+      	generateObjects();
+      	addObjectsToScene();
+      	render();
+      	animate();
+      	console.log("set unload event");
+      	window.onbeforeunload = function(){
+      		//save camera position to be restored after page reload
+      		storage.set('camera-settings', {"position":camera.position});
+      		console.log("saving camera position");
+      	};
+
+      }
+
+
+      function addObjectsToScene() {
+      	for(obj in objects) {
+      		scene.add(objects[obj]);
+      	}
+      }
+
+      function onWindowResize() {
+      	camera.aspect = window.innerWidth / window.innerHeight;
+      	camera.updateProjectionMatrix();
+      	renderer.setSize( window.innerWidth, window.innerHeight );
+      	controls.handleResize();
+      	render();
+      }
+
+      function animate() {
+      	requestAnimationFrame( animate );
+      	//planet.rotation.x += 10;
+      	//console.log("animate")
+      	//if (!keyboard) console.log(keyboard)
+
+      	var speed = 10;
+
+      	/*if (keyboard.pressed('W')) {
+      		//camera.position.x-=speed;
+      		camera.translateZ( speed*-1 );
+      	}
+      	if (keyboard.pressed('A')) {
+      		 //camera.position.z+=speed;
+      		 camera.translateX(speed)
+      	}
+      	if (keyboard.pressed('S')) {
+      		 //camera.position.x+=speed;
+      		 	camera.translateZ( speed );
+      	}
+      	if (keyboard.pressed('D')) {
+      		 //camera.position.z-=speed;
+      		  camera.translateX(speed*-1)
+      	}
+      	if (keyboard.pressed('C')) {
+      		 //camera.position.y-=speed;
+      		  camera.translateY(speed*-1)
+      	}
+      	if (keyboard.pressed('X')) {
+      		 //camera.position.y+=speed;
+      		camera.translateY(speed)
+      	}	*/
+      	controls.update();
+      	TWEEN.update();
+
+      	render();
+      }
+
+
+
+      function render() {
+      	renderer.render(scene, camera);
+      	stats.update();
+      }
+
+
+
+
+
+      function ground(i) {
+
+      	var o = extend(primative({
+      			type:"block",
+      			length:2000,
+      			width:2000,
+      			height:5,
+      			color:0x91fF69,
+      			texture:'images/ground-green.png',
+      			position:{
+      				x:0,
+      				y:0,
+      				z:0
+      			}
+      	}),i);
+
+      	return o;
+      }
+
+
+      function panel(i) {
+      	var o = extend(primative({
+      		type:"block",
+      		length:150,
+      		width:30,
+      		height:1,
+      		color:0xaaaaaa,
+      		texture:'images/solar-panel.jpg',
+      		position:{
+      			x:0,
+      			y:0,
+      			z:0
+      		},
+      		rotation:{
+      			x:1,
+      			y:0,
+      			z:0,
+      			w:Math.PI/2
+      		}
+      	}),i);
+      	return o;
+      }
+
+      function win(i) {
+      	var o = extend(primative({
+      		type:"block",
+      		length:150,
+      		width:1,
+      		height:30,
+      		color:0xaaaaaa,
+      		opacity:0.4,
+      		rotation:{
+      			x:0,
+      			y:0,
+      			z:0,
+      			w:0
+      		},
+      		position:{
+      			x:0,
+      			y:0,
+      			z:0
+      		}
+      	}), i);
+      	return o;
+      }
+
+      function wall(i) {
+      	var o = new THREE.Object3D();
+
+      	o = extend(primative({
+      		type:"block",
+      		length:150,
+      		width:1,
+      		height:30,
+      		color:0xffffff,
+      		position:{
+      			x:0,
+      			y:1,
+      			z:0
+      		},
+      		rotation:{
+      			x:0,
+      			y:0,
+      			z:0,
+      			w:Math.PI/2
+      		}
+      		}),
+      	i);
+      	//o.add(marker())
+      	return(o);
+      }
+      //red = x
+      //green = y
+      //blue = z
+      function room(o) {
+      	var s = new THREE.Object3D();
+      	//s.add(marker())
+      	s.add(panel({position:{x:0, y:-60, z:0},rotation:{x:1,y:0,z:0,w:Math.PI/2}}))
+      	s.add(panel({position:{x:0, y:-30, z:0},rotation:{x:1,y:0,z:0,w:Math.PI/2}}))
+      	s.add(panel({position:{x:0, y:0, z:0},rotation:{x:1,y:0,z:0,w:Math.PI/2}}))
+      	s.add(panel({position:{x:0, y:30, z:0},rotation:{x:1,y:0,z:0,w:Math.PI/2}}))
+      	s.add(panel({position:{x:0, y:60, z:0},rotation:{x:1,y:0,z:0,w:Math.PI/2}}))
+
+      	s.add(wall({position:{x:75.5, y:0, z:14}, rotation:{x:0,y:0,z:1,w:Math.PI/2}}))
+      	s.add(wall({position:{x:0, y:75, z:14}, rotation:{x:0,y:0,z:0,w:0}}))
+      	s.add(win({position:{x:0, y:-75, z:14}, rotation:{x:0,y:0,z:-1,w:Math.PI/2}}))
+      	s.add(win({position:{x:-75, y:0, z:14}, rotation:{x:0,y:0,z:1,w:Math.PI/2}}))
+
+      	return extend(s,o);
+      }
+
+      function column(o) {
+      	var s = new THREE.Object3D();
+      	for (var i=0; i < o.stories; i++) {
+      		var height =((i*30)+1)
+      		s.add(room({position:{x:0,y:0,z:height}, rotation:{x:0,y:0,z:0,w:0}}));
+      	}
+      	return extend(s,o);
+      }
+
+      function line(o) {
+
+      	return primative(extend({
+      		type:"block",
+      		length:2000,
+      		width:2,
+      		height:2,
+      		position:{
+      			x:0,
+      			y:0,
+      			z:0
+      		}
+      	},o));
+      }
+
+
+      function marker(o) {
+      	var s = new THREE.Object3D();
+      	s.add(line({color:0xff0000, rotation:{x:1,y:0,z:0,w:Math.PI/2}}));
+      	s.add(line({color:0x00ff00, rotation:{x:0,y:1,z:0,w:Math.PI/2}}));
+      	s.add(line({color:0x0000ff, rotation:{x:0,y:0,z:1,w:Math.PI/2}}));
+      	return extend(s,o);
+      }
+
+      function tower(o) {
+      	var s = new THREE.Object3D();
+      	s.add(column({position:{x:0,y:0,z:0},stories:o.stories}));
+      	s.add(column({position:{x:200,y:0,z:0},stories:o.stories,rotation:{x:0,y:0,z:1,w:Math.PI/2}}));
+      	s.add(column({position:{x:200,y:200,z:0},stories:o.stories,rotation:{x:0,y:0,z:1,w:Math.PI}}));
+      	s.add(column({position:{x:0,y:200,z:0},stories:o.stories, rotation:{x:0,y:0,z:1,w:Math.PI*1.5}}));
+      	return extend(s,o);
+      }
+
+      function generateObjects() {
+
+      	objects.push(ground());
+      	objects.push(marker({position:{x:0,y:0,z:5}}));
+      	objects.push(tower({stories:16, position:{x:0,y:1,z:2}}));
+
+
+      	//objects.push(room({position:{x:200,y:0,z:0}, rotation:{x:0,y:0,z:0,w:Math.PI/2}}));
+
+      	//objects.push(pointLight({position:{x:10000,y:10000,z:10000}, color:0xffffff, intensity:0.01}));
+      	objects.push(ambientLight({color:0xaaaaaa}))
+      }
+
+      init();
+
+    </script>
+  </div>
+</div>
